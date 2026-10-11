@@ -798,3 +798,40 @@ export function loginWithGitHub(profile, remember) {
     }
     return Promise.resolve(createSession(name, remember !== false));
 }
+
+/**
+ * PAT 粘贴登录。
+ *
+ * 为什么不用 Device Flow：线上（GitHub Pages）无法代理
+ * github.com/login/device/code（纯静态托管挡 POST、端点无 CORS、
+ * 公共代理不可用且登录场景不应信任第三方）。
+ * 而 api.github.com 自带完整 CORS，PAT 直连即可完成登录。
+ *
+ * @param {string} pat 用户在 GitHub 生成的 Personal Access Token
+ *   （classic：勾 user:email 可登录；要发布社区再勾 gist）
+ * @param {boolean} [remember] 是否记住登录（默认 true）
+ * @returns {Promise<{session: object, token: string, hasGistScope: boolean}>}
+ */
+export async function loginWithPAT(pat, remember) {
+    const token = String(pat || '').trim();
+    if (!token) throw new Error('请粘贴 GitHub Personal Access Token');
+    // 细令牌以 ghp_（classic）或 github_pat_（fine-grained）开头；不硬卡前缀，
+    // 只做基本长度检查，真正的校验交给 /user 调用
+    if (token.length < 20) throw new Error('Token 长度不对，请检查是否复制完整');
+
+    const profile = await fetchGitHubProfile(token);
+
+    // 探测 gist 权限（社区发布需要）：对 /gists 发一个轻量 HEAD。
+    // 403/404 都视为无权限，401 才是 token 本身无效（上面 /user 已过，不会到这）。
+    let hasGistScope = false;
+    try {
+        const r = await fetch('https://api.github.com/gists?per_page=1', {
+            method: 'HEAD',
+            headers: {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'}
+        });
+        hasGistScope = r.ok;
+    } catch (e) { /* 探测失败按无权限处理 */ }
+
+    const session = await loginWithGitHub(profile, remember);
+    return {session, token, hasGistScope};
+}

@@ -18,7 +18,7 @@ import {FORGEXT_RUNTIME, withUtilInjection} from '../lib/forgeext-runtime.js';
 // 登录只走 GitHub Device Flow：全程在页面内完成，不用 authorize 重定向，
 // 也就不需要 buildGitHubAuthUrl / makeGitHubState。用户名/密码与邮箱验证码
 // 相关的 login / register / sendEmailCode / verifyEmailCode 同样已不再引用。
-import {getSession, logout as authLogout, getUserMeta, savePrevSession, getPrevSession, switchToPrevSession, clearLocalAuthData, startGitHubDeviceFlow, pollGitHubDeviceToken, fetchGitHubProfile, loginWithGitHub, getRegisteredAccounts, switchToAccount, ensureSiteAccount} from '../lib/auth.js';
+import {getSession, logout as authLogout, getUserMeta, savePrevSession, getPrevSession, switchToPrevSession, clearLocalAuthData, startGitHubDeviceFlow, pollGitHubDeviceToken, fetchGitHubProfile, loginWithGitHub, loginWithPAT, getRegisteredAccounts, switchToAccount, ensureSiteAccount} from '../lib/auth.js';
 import {
     listSaves, saveProject, deleteSave, exportSaveFile, parseSaveFileText,
     collectProjectState, restoreProjectState
@@ -391,6 +391,12 @@ const ExtensionBuilderInner = () => {
     const [deviceFlow, setDeviceFlow] = useState(null);
     const deviceFlowTimerRef = useRef(null);
     const deviceFlowBusyRef = useRef(false);
+    // PAT 粘贴登录（线上主登录方式）。
+    // 线上是 GitHub Pages：无法代理 Device Flow 的 POST（纯静态挡 POST、
+    // github.com OAuth 端点无 CORS），Device Flow 只在本地 devServer 下可用。
+    // PAT 走 api.github.com（自带 CORS），无服务端依赖。
+    const [patLogin, setPatLogin] = useState({busy: false, error: '', showForm: false});
+    const patInputRef = useRef(null);
     // 条款弹窗：null | 'terms' | 'privacy'。正文在 lib/legal-docs.js，
     // 与网站上的条款页内容一致；这里只决定显示哪一篇。
     const [legalModal, setLegalModal] = useState(null);
@@ -4605,8 +4611,43 @@ const ExtensionBuilderInner = () => {
             setLegalModal('terms');
             return;
         }
-        startDeviceFlow();
-    }, [legalAgreed, startDeviceFlow]);
+        // 线上主入口是 PAT 粘贴登录（理由见 patLogin 注释）；
+        // Device Flow 降级为弹窗内的「本地开发模式」折叠项，手动展开才走。
+        setPatLogin({busy: false, error: '', showForm: true});
+    }, [legalAgreed]);
+
+    /**
+     * PAT 粘贴登录（线上主登录方式，理由见 patLogin state 注释）。
+     * 成功后：session 建立 + token 存 sessionStorage（关浏览器即失效，
+     * 不落 localStorage —— 与现有「不长期保存 token」的安全取向一致）；
+     * 若探测到 gist 权限，社区发布直接可用，无需再走一次授权。
+     */
+    const handlePatLogin = useCallback(async () => {
+        if (!legalAgreed) {
+            pendingLoginRef.current = true;
+            setLegalModal('terms');
+            return;
+        }
+        const pat = patInputRef.current ? patInputRef.current.value.trim() : '';
+        setPatLogin({busy: true, error: '', showForm: true});
+        try {
+            const {session: s, token, hasGistScope} = await loginWithPAT(pat, true);
+            // 只有带 gist 权限的 token 才存给社区发布用 —— 否则发布时会
+            // 拿着一个没权限的 token 去调 Gist API，报错让人摸不着头脑
+            if (hasGistScope) {
+                try { sessionStorage.setItem('forgeext_gist_token', token); } catch (e) { /* 无痕 */ }
+            }
+            setSession(s);
+            setUserPanelType(null);
+            setPatLogin({busy: false, error: '', showForm: false});
+            if (!hasGistScope) {
+                // token 能登录但不能发社区 —— 提示一句，不打断登录
+                alert('已登录 GitHub。注意：这个 Token 没有 gist 权限，发布社区扩展时会提示重新授权。');
+            }
+        } catch (e) {
+            setPatLogin({busy: false, error: (e && e.message) || String(e), showForm: true});
+        }
+    }, [legalAgreed]);
 
     // 卸载时停掉轮询，避免组件销毁后 setState
     useEffect(() => () => {
@@ -6399,12 +6440,12 @@ const ExtensionBuilderInner = () => {
                 </div>
             )}
 
-            {/* GitHub Device Flow 授权弹窗：显示用户码 + 轮询状态。
-                没有用户名/密码表单，也不需要回调页，全程在本页完成。 */}
-            {deviceFlow && (
+            {/* GitHub 登录弹窗：PAT 粘贴登录（主）+ Device Flow（本地开发折叠项）。
+                没有 redirect、不需要回调页，全程在本页完成。 */}
+            {(deviceFlow || patLogin.showForm) && (
                 <div
                     className="ext-auth-backdrop"
-                    onClick={(e) => { if (e.target === e.currentTarget) stopDeviceFlow(); }}
+                    onClick={(e) => { if (e.target === e.currentTarget) { stopDeviceFlow(); setPatLogin({busy: false, error: '', showForm: false}); } }}
                 >
                     <div className="ext-auth-card ext-device-card">
                         <div className="ext-auth-header">
@@ -6415,15 +6456,53 @@ const ExtensionBuilderInner = () => {
                             <button
                                 type="button"
                                 className="ext-builder-modal-close"
-                                onClick={stopDeviceFlow}
+                                onClick={() => { stopDeviceFlow(); setPatLogin({busy: false, error: '', showForm: false}); }}
                                 aria-label="关闭"
                                 title="取消登录"
                             ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                         </div>
                         <div className="ext-device-body">
-                            {deviceFlow.status === 'starting' && (
-                                <div className="ext-device-hint">正在向 GitHub 申请设备码…</div>
+                            {/* ── PAT 粘贴登录（线上主入口）──
+                                线上是 GitHub Pages，Device Flow 的 POST 无法代理；
+                                PAT 走 api.github.com（自带 CORS），任何环境都能用。 */}
+                            {patLogin.showForm ? (
+                                <React.Fragment>
+                                    <div className="ext-device-hint">
+                                        粘贴 GitHub <b>Personal Access Token</b> 完成登录（
+                                        <a href="https://github.com/settings/tokens/new?scopes=user:email&description=ForgeExt" target="_blank" rel="noopener noreferrer">点此创建</a>
+                                        ，勾选 <code>user:email</code>；要发布社区扩展再勾 <code>gist</code>）。
+                                    </div>
+                                    <input
+                                        type="password"
+                                        className="ext-auth-input"
+                                        ref={patInputRef}
+                                        placeholder="ghp_… 或 github_pat_…"
+                                        autoComplete="off"
+                                        onKeyDown={(e) => { if (e.key === 'Enter') handlePatLogin(); }}
+                                    />
+                                    {patLogin.error && <div className="ext-auth-error">{patLogin.error}</div>}
+                                    <button
+                                        type="button"
+                                        className="ext-auth-btn"
+                                        onClick={handlePatLogin}
+                                        disabled={patLogin.busy}
+                                    >{patLogin.busy ? '验证中…' : '登录'}</button>
+                                    <div className="ext-legal-foot">
+                                        Token 只保存在本页会话（sessionStorage），关闭浏览器即失效，不会长期保存。
+                                    </div>
+                                </React.Fragment>
+                            ) : (
+                                <div className="ext-device-hint">
+                                    已使用 Token 登录。如需切换账号，请先退出登录。
+                                </div>
                             )}
+
+                            {/* ── Device Flow（本地 devServer 备选）── */}
+                            <details className="ext-device-alt">
+                                <summary>本地开发模式（Device Flow）</summary>
+                                {deviceFlow.status === 'starting' && (
+                                    <div className="ext-device-hint">正在向 GitHub 申请设备码…</div>
+                                )}
 
                             {deviceFlow.status === 'waiting' && (
                                 <React.Fragment>
@@ -6480,8 +6559,9 @@ const ExtensionBuilderInner = () => {
                                 <React.Fragment>
                                     <div className="ext-auth-error">{deviceFlow.error}</div>
                                     <div className="ext-device-hint">
-                                        若提示 <code>device_flow_disabled</code>，请到 GitHub → Settings → Developer settings
-                                        → OAuth Apps → 你的应用，勾选 <b>Enable Device Flow</b> 后重试。
+                                        线上（GitHub Pages）无法代理 Device Flow，请改用上方的 Token 登录。
+                                        本地开发（127.0.0.1）下此流程可用；若仍报 device_flow_disabled，
+                                        到 GitHub → Settings → Developer settings → OAuth Apps 勾选 Enable Device Flow。
                                     </div>
                                     <button
                                         type="button"
@@ -6490,6 +6570,7 @@ const ExtensionBuilderInner = () => {
                                     >重试</button>
                                 </React.Fragment>
                             )}
+                            </details>
                         </div>
                     </div>
                 </div>

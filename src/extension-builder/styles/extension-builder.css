@@ -2745,6 +2745,26 @@
     box-shadow: 0 0 0 2px rgba(76, 151, 255, 0.25);
 }
 
+/* 登录弹窗里的「本地开发模式（Device Flow）」折叠区：
+   主入口是 PAT 粘贴登录，Device Flow 降级为备选，视觉上要弱化。 */
+:global(.ext-device-alt) {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--fx-border);
+}
+:global(.ext-device-alt > summary) {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fx-text-3);
+    user-select: none;
+}
+:global(.ext-device-alt > summary:hover) {
+    color: var(--fx-text-2);
+}
+:global(.ext-device-alt[open] > summary) {
+    margin-bottom: 10px;
+}
+
 :global(.ext-auth-btn) {
     margin-top: 10px;
     padding: 8px 12px;

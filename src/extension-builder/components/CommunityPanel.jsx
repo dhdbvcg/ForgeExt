@@ -81,10 +81,19 @@ function setToken(t) {
     } catch (e) { /* 无痕模式 */ }
 }
 
-/** 走一次 Device Flow 拿 gist 权限的 token */
+/**
+ * 拿 gist 权限的 token。
+ * 优先用 PAT 登录时存下的 token（forgeext_gist_token —— 登录时若探测到
+ * gist 权限就会写入）；没有时才走 Device Flow（仅本地 devServer 可用，
+ * 线上会直接报错并引导用户用带 gist 权限的 PAT 重新登录）。
+ */
 async function acquireGistToken() {
     const existing = getToken();
     if (existing) return existing;
+    // 线上无法代理 Device Flow —— 直接给出可操作的提示而不是让它失败
+    if (location.protocol === 'https:' && !location.hostname.startsWith('127.') && !location.hostname.startsWith('localhost')) {
+        throw new Error('当前 Token 没有 gist 权限。请到 GitHub 生成一个勾选了 gist 权限的 Personal Access Token（github.com/settings/tokens），退出后用它重新登录，即可发布。');
+    }
     const d = await startGitHubDeviceFlow(GIST_SCOPE);
     // 打开授权页（可能被拦截，但用户码已展示）
     try { window.open(d.verificationUriComplete || d.verificationUri, 'gh-gist', 'width=600,height=720'); } catch (e) { /* 无妨 */ }
