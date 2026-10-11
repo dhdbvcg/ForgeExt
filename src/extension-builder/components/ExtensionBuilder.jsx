@@ -6462,40 +6462,34 @@ const ExtensionBuilderInner = () => {
                             ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                         </div>
                         <div className="ext-device-body">
-                            {/* ── PAT 粘贴登录（线上主入口）──
+                            {/* ── PAT 粘贴登录（唯一线上入口）──
                                 线上是 GitHub Pages，Device Flow 的 POST 无法代理；
-                                PAT 走 api.github.com（自带 CORS），任何环境都能用。 */}
-                            {patLogin.showForm ? (
-                                <React.Fragment>
-                                    <div className="ext-device-hint">
-                                        粘贴 GitHub <b>Personal Access Token</b> 完成登录（
-                                        <a href="https://github.com/settings/tokens/new?scopes=user:email&description=ForgeExt" target="_blank" rel="noopener noreferrer">点此创建</a>
-                                        ，勾选 <code>user:email</code>；要发布社区扩展再勾 <code>gist</code>）。
-                                    </div>
-                                    <input
-                                        type="password"
-                                        className="ext-auth-input"
-                                        ref={patInputRef}
-                                        placeholder="ghp_… 或 github_pat_…"
-                                        autoComplete="off"
-                                        onKeyDown={(e) => { if (e.key === 'Enter') handlePatLogin(); }}
-                                    />
-                                    {patLogin.error && <div className="ext-auth-error">{patLogin.error}</div>}
-                                    <button
-                                        type="button"
-                                        className="ext-auth-btn"
-                                        onClick={handlePatLogin}
-                                        disabled={patLogin.busy}
-                                    >{patLogin.busy ? '验证中…' : '登录'}</button>
-                                    <div className="ext-legal-foot">
-                                        Token 只保存在本页会话（sessionStorage），关闭浏览器即失效，不会长期保存。
-                                    </div>
-                                </React.Fragment>
-                            ) : (
-                                <div className="ext-device-hint">
-                                    已使用 Token 登录。如需切换账号，请先退出登录。
-                                </div>
-                            )}
+                                PAT 走 api.github.com（自带 CORS），任何环境都能用。
+                                弹窗内始终显示表单 —— 之前用 showForm 三态切换，
+                                会在 Device Flow error 残留时误显「已登录」死状态。 */}
+                            <div className="ext-device-hint">
+                                粘贴 GitHub <b>Personal Access Token</b> 完成登录（
+                                <a href="https://github.com/settings/tokens/new?scopes=user:email,gist&description=ForgeExt" target="_blank" rel="noopener noreferrer">点此创建</a>
+                                ，勾选 <code>user:email</code> 和 <code>gist</code>（发布社区需要））。
+                            </div>
+                            <input
+                                type="password"
+                                className="ext-auth-input"
+                                ref={patInputRef}
+                                placeholder="ghp_… 或 github_pat_…"
+                                autoComplete="off"
+                                onKeyDown={(e) => { if (e.key === 'Enter') handlePatLogin(); }}
+                            />
+                            {patLogin.error && <div className="ext-auth-error">{patLogin.error}</div>}
+                            <button
+                                type="button"
+                                className="ext-auth-btn"
+                                onClick={handlePatLogin}
+                                disabled={patLogin.busy}
+                            >{patLogin.busy ? '验证中…' : '登录'}</button>
+                            <div className="ext-legal-foot">
+                                Token 只保存在本页会话（sessionStorage），关闭浏览器即失效，不会长期保存。
+                            </div>
 
                             {/* ── Device Flow（本地 devServer 备选）── */}
                             <details className="ext-device-alt">
@@ -6617,10 +6611,12 @@ const ExtensionBuilderInner = () => {
                                     onClick={() => {
                                         setLegalAgreed(true);
                                         setLegalModal(null);
-                                        // 用户本意是登录，被条款拦下的：同意后直接接着走
+                                        // 用户本意是登录，被条款拦下的：同意后直接接着走。
+                                        // 主入口是 PAT 粘贴登录（Device Flow 线上不可用，
+                                        // 已降级为登录弹窗里的本地开发折叠项）。
                                         if (pendingLoginRef.current) {
                                             pendingLoginRef.current = false;
-                                            startDeviceFlow();
+                                            setPatLogin({busy: false, error: '', showForm: true});
                                         }
                                     }}
                                 >同意并继续</button>
