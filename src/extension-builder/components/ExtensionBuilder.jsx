@@ -4611,10 +4611,11 @@ const ExtensionBuilderInner = () => {
             setLegalModal('terms');
             return;
         }
-        // 线上主入口是 PAT 粘贴登录（理由见 patLogin 注释）；
-        // Device Flow 降级为弹窗内的「本地开发模式」折叠项，手动展开才走。
-        setPatLogin({busy: false, error: '', showForm: true});
-    }, [legalAgreed]);
+        // 主流程：Device Flow（后端代理已部署在 Cloudflare：
+        // website/_worker.js → scratchextensioneditor.pages.dev/github-oauth/*）。
+        // 代理不可用时，弹窗里还有 PAT 粘贴登录作为兜底。
+        startDeviceFlow();
+    }, [legalAgreed, startDeviceFlow]);
 
     /**
      * PAT 粘贴登录（线上主登录方式，理由见 patLogin state 注释）。
@@ -6462,46 +6463,15 @@ const ExtensionBuilderInner = () => {
                             ><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                         </div>
                         <div className="ext-device-body">
-                            {/* ── PAT 粘贴登录（唯一线上入口）──
-                                线上是 GitHub Pages，Device Flow 的 POST 无法代理；
-                                PAT 走 api.github.com（自带 CORS），任何环境都能用。
-                                弹窗内始终显示表单 —— 之前用 showForm 三态切换，
-                                会在 Device Flow error 残留时误显「已登录」死状态。 */}
-                            <div className="ext-device-hint">
-                                粘贴 GitHub <b>Personal Access Token</b> 完成登录（
-                                <a href="https://github.com/settings/tokens/new?scopes=user:email,gist&description=ForgeExt" target="_blank" rel="noopener noreferrer">点此创建</a>
-                                ，勾选 <code>user:email</code> 和 <code>gist</code>（发布社区需要））。
-                            </div>
-                            <input
-                                type="password"
-                                className="ext-auth-input"
-                                ref={patInputRef}
-                                placeholder="ghp_… 或 github_pat_…"
-                                autoComplete="off"
-                                onKeyDown={(e) => { if (e.key === 'Enter') handlePatLogin(); }}
-                            />
-                            {patLogin.error && <div className="ext-auth-error">{patLogin.error}</div>}
-                            <button
-                                type="button"
-                                className="ext-auth-btn"
-                                onClick={handlePatLogin}
-                                disabled={patLogin.busy}
-                            >{patLogin.busy ? '验证中…' : '登录'}</button>
-                            <div className="ext-legal-foot">
-                                Token 只保存在本页会话（sessionStorage），关闭浏览器即失效，不会长期保存。
-                            </div>
-
-                            {/* ── Device Flow（本地 devServer 备选）──
-                                deviceFlow 可能为 null（弹窗由 PAT 表单打开时），
-                                所以每处状态判断都走可选链 —— 裸访问 deviceFlow.status
-                                会在设备流程未启动时抛
-                                TypeError: Cannot read properties of null，整个
-                                ExtensionBuilder 渲染崩溃（历史上就是这样白屏的）。 */}
-                            <details className="ext-device-alt">
-                                <summary>本地开发模式（Device Flow）</summary>
-                                {deviceFlow && deviceFlow.status === 'starting' && (
-                                    <div className="ext-device-hint">正在向 GitHub 申请设备码…</div>
-                                )}
+                            {/* ── Device Flow（主流程）──
+                                后端代理部署在 Cloudflare（forgeext.github.io 是纯静态，
+                                挡 POST）：website/_worker.js →
+                                scratchextensioneditor.pages.dev/github-oauth/*
+                                每处 deviceFlow 访问都判空：弹窗也可能因 PAT 表单而打开，
+                                此时 deviceFlow 为 null（历史上裸访问 .status 会白屏）。 */}
+                            {deviceFlow && deviceFlow.status === 'starting' && (
+                                <div className="ext-device-hint">正在向 GitHub 申请设备码…</div>
+                            )}
 
                             {deviceFlow && deviceFlow.status === 'waiting' && (
                                 <React.Fragment>
@@ -6558,9 +6528,7 @@ const ExtensionBuilderInner = () => {
                                 <React.Fragment>
                                     <div className="ext-auth-error">{deviceFlow.error}</div>
                                     <div className="ext-device-hint">
-                                        线上（GitHub Pages）无法代理 Device Flow，请改用上方的 Token 登录。
-                                        本地开发（127.0.0.1）下此流程可用；若仍报 device_flow_disabled，
-                                        到 GitHub → Settings → Developer settings → OAuth Apps 勾选 Enable Device Flow。
+                                        若持续失败，可展开下方「用 Token 登录」作为替代方式。
                                     </div>
                                     <button
                                         type="button"
@@ -6569,6 +6537,35 @@ const ExtensionBuilderInner = () => {
                                     >重试</button>
                                 </React.Fragment>
                             )}
+
+                            {/* ── PAT 粘贴登录（兜底）──
+                                Device Flow 需要后端代理，代理不可用（网络拦截、部署
+                                故障）时用这个：api.github.com 自带 CORS，不依赖代理。 */}
+                            <details className="ext-device-alt">
+                                <summary>用 Token 登录（备用方式）</summary>
+                                <div className="ext-device-hint">
+                                    粘贴 GitHub <b>Personal Access Token</b>（
+                                    <a href="https://github.com/settings/tokens/new?scopes=user:email,gist&description=ForgeExt" target="_blank" rel="noopener noreferrer">点此创建</a>
+                                    ，勾 <code>user:email</code> 登录、<code>gist</code> 发布社区）。
+                                </div>
+                                <input
+                                    type="password"
+                                    className="ext-auth-input"
+                                    ref={patInputRef}
+                                    placeholder="ghp_… 或 github_pat_…"
+                                    autoComplete="off"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') handlePatLogin(); }}
+                                />
+                                {patLogin.error && <div className="ext-auth-error">{patLogin.error}</div>}
+                                <button
+                                    type="button"
+                                    className="ext-auth-btn"
+                                    onClick={handlePatLogin}
+                                    disabled={patLogin.busy}
+                                >{patLogin.busy ? '验证中…' : '用 Token 登录'}</button>
+                                <div className="ext-legal-foot">
+                                    Token 只保存在本页会话（sessionStorage），关闭浏览器即失效。
+                                </div>
                             </details>
                         </div>
                     </div>

@@ -679,11 +679,11 @@ const GITHUB_DEVICE_VERIFY = 'https://github.com/login/device';
  * @returns {Promise<{deviceCode, userCode, verificationUri, expiresIn, interval}>}
  */
 export function startGitHubDeviceFlow(scope) {
-    return fetch(GITHUB_DEVICE_START, {
+    return fetchWithTimeout(GITHUB_DEVICE_START, {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: JSON.stringify({client_id: GITHUB_CLIENT_ID, scope: scope || GITHUB_SCOPE})
-    }).then((r) => r.json().catch(() => ({}))).then((d) => {
+    }, 15000).then((r) => r.json().catch(() => ({}))).then((d) => {
         if (!d || !d.device_code) {
             const msg = (d && (d.error_description || d.error)) || 'GitHub 未返回设备码';
             throw new Error(msg + '（若提示 device_flow_disabled，请在 GitHub OAuth App 设置里勾选 Enable Device Flow）');
@@ -699,6 +699,9 @@ export function startGitHubDeviceFlow(scope) {
             expiresIn: Number(d.expires_in) || 900,
             interval: Number(d.interval) || 5
         };
+    }).catch((e) => {
+        if (e && e.name === 'AbortError') throw new Error('登录服务无响应（超时）。请检查网络，或展开下方「用 Token 登录」。');
+        throw e;
     });
 }
 
@@ -711,7 +714,7 @@ export function startGitHubDeviceFlow(scope) {
  *   access_denied         → 用户拒绝
  */
 export function pollGitHubDeviceToken(deviceCode) {
-    return fetch(GITHUB_DEVICE_TOKEN, {
+    return fetchWithTimeout(GITHUB_DEVICE_TOKEN, {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
         body: JSON.stringify({
@@ -719,7 +722,7 @@ export function pollGitHubDeviceToken(deviceCode) {
             device_code: deviceCode,
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
         })
-    }).then((r) => r.json().catch(() => ({})));
+    }, 15000).then((r) => r.json().catch(() => ({}))).catch(() => ({}));
 }
 
 /**
@@ -817,12 +820,25 @@ export function loginWithGitHub(profile, remember) {
 }
 
 /**
- * PAT 粘贴登录。
+ * 带超时的 fetch。
+ * 为什么需要：GitHub API 在部分网络下会「连上但无响应」，没有超时的话
+ * 登录按钮会永远停在「验证中…」，用户既得不到结果也看不到错误。
+ */
+async function fetchWithTimeout(url, opts, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+        return await fetch(url, Object.assign({}, opts, {signal: ctrl.signal}));
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * PAT 粘贴登录（线上备选登录方式；主流程是经 Cloudflare 代理的 Device Flow）。
  *
- * 为什么不用 Device Flow：线上（GitHub Pages）无法代理
- * github.com/login/device/code（纯静态托管挡 POST、端点无 CORS、
- * 公共代理不可用且登录场景不应信任第三方）。
- * 而 api.github.com 自带完整 CORS，PAT 直连即可完成登录。
+ * api.github.com 自带完整 CORS，PAT 直连即可完成登录，不依赖任何代理 ——
+ * Device Flow 的代理挂掉时它是可用的兜底。
  *
  * @param {string} pat 用户在 GitHub 生成的 Personal Access Token
  *   （classic：勾 user:email 可登录；要发布社区再勾 gist）
@@ -836,19 +852,49 @@ export async function loginWithPAT(pat, remember) {
     // 只做基本长度检查，真正的校验交给 /user 调用
     if (token.length < 20) throw new Error('Token 长度不对，请检查是否复制完整');
 
-    const profile = await fetchGitHubProfile(token);
+    let profile;
+    try {
+        profile = await fetchGitHubProfileWithTimeout(token, 20000);
+    } catch (e) {
+        const msg = (e && e.name === 'AbortError')
+            ? '连接 GitHub 超时（20 秒无响应）。请检查网络后重试。'
+            : (e && e.message) || String(e);
+        throw new Error(msg);
+    }
 
     // 探测 gist 权限（社区发布需要）：对 /gists 发一个轻量 HEAD。
     // 403/404 都视为无权限，401 才是 token 本身无效（上面 /user 已过，不会到这）。
     let hasGistScope = false;
     try {
-        const r = await fetch('https://api.github.com/gists?per_page=1', {
+        const r = await fetchWithTimeout('https://api.github.com/gists?per_page=1', {
             method: 'HEAD',
             headers: {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'}
-        });
+        }, 10000);
         hasGistScope = r.ok;
-    } catch (e) { /* 探测失败按无权限处理 */ }
+    } catch (e) { /* 探测失败按无权限处理，不影响登录 */ }
 
     const session = await loginWithGitHub(profile, remember);
     return {session, token, hasGistScope};
+}
+
+/** fetchGitHubProfile 的超时版本（内部用） */
+function fetchGitHubProfileWithTimeout(accessToken, ms) {
+    return fetchWithTimeout('https://api.github.com/user', {
+        headers: {
+            'Authorization': 'Bearer ' + accessToken,
+            'Accept': 'application/vnd.github+json'
+        }
+    }, ms).then((r) => {
+        if (r.status === 401) throw new Error('Token 无效或已过期，请重新生成');
+        return r.json();
+    }).then((user) => {
+        if (!user || !user.login) throw new Error('无法获取 GitHub 用户资料');
+        return {
+            id: user.id,
+            login: user.login,
+            name: user.name || user.login,
+            avatar: (user.avatar_url || '') + (user.avatar_url ? '&s=80' : ''),
+            email: user.email || ''
+        };
+    });
 }
