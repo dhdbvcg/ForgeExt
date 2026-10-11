@@ -6491,14 +6491,19 @@ const ExtensionBuilderInner = () => {
                                 Token 只保存在本页会话（sessionStorage），关闭浏览器即失效，不会长期保存。
                             </div>
 
-                            {/* ── Device Flow（本地 devServer 备选）── */}
+                            {/* ── Device Flow（本地 devServer 备选）──
+                                deviceFlow 可能为 null（弹窗由 PAT 表单打开时），
+                                所以每处状态判断都走可选链 —— 裸访问 deviceFlow.status
+                                会在设备流程未启动时抛
+                                TypeError: Cannot read properties of null，整个
+                                ExtensionBuilder 渲染崩溃（历史上就是这样白屏的）。 */}
                             <details className="ext-device-alt">
                                 <summary>本地开发模式（Device Flow）</summary>
-                                {deviceFlow.status === 'starting' && (
+                                {deviceFlow && deviceFlow.status === 'starting' && (
                                     <div className="ext-device-hint">正在向 GitHub 申请设备码…</div>
                                 )}
 
-                            {deviceFlow.status === 'waiting' && (
+                            {deviceFlow && deviceFlow.status === 'waiting' && (
                                 <React.Fragment>
                                     <div className="ext-device-hint">
                                         在 GitHub 页面输入下面的用户码并确认授权：
@@ -6549,7 +6554,7 @@ const ExtensionBuilderInner = () => {
                                 </React.Fragment>
                             )}
 
-                            {deviceFlow.status === 'error' && (
+                            {deviceFlow && deviceFlow.status === 'error' && (
                                 <React.Fragment>
                                     <div className="ext-auth-error">{deviceFlow.error}</div>
                                     <div className="ext-device-hint">
