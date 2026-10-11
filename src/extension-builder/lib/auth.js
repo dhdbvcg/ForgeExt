@@ -643,17 +643,34 @@ const GITHUB_SCOPE = 'user:email';
 // 必须与该 GitHub OAuth App 中登记的「Authorization callback URL」完全一致
 const GITHUB_CALLBACK = 'https://scratchextensioneditor.cc.cd/api/github-callback';
 
-// ── GitHub Device Flow（默认登录方式） ──
+// ── GitHub Device Flow ──
 // 为什么不用上面的 authorize 重定向流程：那条路必须有服务端用 client_secret
 // 换 token，而现成的服务端只部署在 scratchextensioneditor.cc.cd 上，本地
 // 127.0.0.1 点登录会被弹到线上编辑器去。Device Flow 没有 redirect_uri，
 // token 由浏览器直接轮询换取，因此在任何源（含 localhost）都能完成登录。
 //
-// GitHub 的这两个端点不带 CORS 头，浏览器直连会 Failed to fetch，故走
-// webpack devServer 的同源反代 /github-oauth/*（见 webpack.config.js）。
+// GitHub 的这两个端点不带 CORS 头，浏览器直连会 Failed to fetch，必须有代理：
+//   - 本地（devServer）：同源反代 /github-oauth/*（见 webpack.config.js）
+//   - 线上（GitHub Pages）：静态托管挡 POST（405），所以后端放在 Cloudflare
+//     Pages Function 上（website/functions/github-oauth/[[path]].js），
+//     跨域调用、已配好 CORS 白名单。
 // 注意：GitHub Device Flow 需要在 OAuth App 设置里勾选 Enable Device Flow。
-const GITHUB_DEVICE_START = '/github-oauth/device/code';
-const GITHUB_DEVICE_TOKEN = '/github-oauth/oauth/access_token';
+const DEVICE_PROXY_REMOTE = 'https://scratchextensioneditor.pages.dev';
+
+/** 当前是否跑在本地开发服务器上（devServer 有同源反代可用） */
+function isLocalDev() {
+    if (typeof window === 'undefined' || !window.location) return false;
+    const h = window.location.hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+
+/** 按运行环境选代理基址 */
+function deviceProxyBase() {
+    return isLocalDev() ? '' : DEVICE_PROXY_REMOTE;
+}
+
+const GITHUB_DEVICE_START = deviceProxyBase() + '/github-oauth/device/code';
+const GITHUB_DEVICE_TOKEN = deviceProxyBase() + '/github-oauth/oauth/access_token';
 const GITHUB_DEVICE_VERIFY = 'https://github.com/login/device';
 
 /**
