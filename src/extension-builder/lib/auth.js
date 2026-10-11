@@ -637,7 +637,7 @@ export function switchToAccount(username, remember) {
 // 与 DNSHE 的「GitHub 快捷登录」能力一致，但密钥留在服务端，前端只持有 client_id（非机密）。
 
 // ⚠️ 替换为你在 GitHub 创建的 OAuth App 的 client_id（公开，可放前端）
-const GITHUB_CLIENT_ID = 'Ov23liFq7039LOgx6nm3';
+const GITHUB_CLIENT_ID = 'Ov23liyPHcuvhocCJCws';
 const GITHUB_AUTH_BASE = 'https://github.com/login/oauth/authorize';
 const GITHUB_SCOPE = 'user:email';
 // 必须与该 GitHub OAuth App 中登记的「Authorization callback URL」完全一致

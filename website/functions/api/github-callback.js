@@ -30,7 +30,7 @@ export async function onRequestGet(context) {
         });
     }
 
-    const CLIENT_ID = 'Ov23liFq7039LOgx6nm3';
+    const CLIENT_ID = 'Ov23liyPHcuvhocCJCws';
     const CLIENT_SECRET = env.GH_CLIENT_SECRET || '';
     const REDIRECT_URI = 'https://scratchextensioneditor.cc.cd/api/github-callback';
 

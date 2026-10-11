@@ -24,7 +24,7 @@ var AuthWeb = (function () {
         'https://scratchextensioneditor.cc.cd',
         'https://scratchextensioneditor.pages.dev'
     ];
-    var GITHUB_CLIENT_ID = 'Ov23liFq7039LOgx6nm3';
+    var GITHUB_CLIENT_ID = 'Ov23liyPHcuvhocCJCws';
     // 发给 GitHub 的 redirect_uri（必须与 GitHub OAuth App 注册的完全一致）
     var GITHUB_CALLBACK = 'https://scratchextensioneditor.cc.cd/api/github-callback';
 
